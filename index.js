@@ -1,5 +1,15 @@
-const { WebsocketStream, TimeUnit } = require('@binance/connector')
+const { WebsocketStream, TimeUnit, Spot } = require('@binance/connector')
 const { Console } = require('console')
+
+// Add API configuration
+const apiKey = 'YOUR_API_KEY'
+const apiSecret = 'YOUR_API_SECRET'
+const client = new Spot(apiKey, apiSecret)
+
+// Add trading configuration
+const CONFIG = {
+    ORDER_SIZE_USDT: 1,  // Size in USDT
+}
 
 const logger = new Console({ stdout: process.stdout, stderr: process.stderr })
 
@@ -18,8 +28,8 @@ const callbacksUSDC = {
     close: () => logger.debug('Disconnected USDC/USDT'),
     message: data => {
         const ticker = JSON.parse(data)
-        lastPrice.usdcusdts = ticker.b  // Mejor bid (compra)
-        lastPrice.usdcusdtb = ticker.a  // Mejor ask (venta)
+        lastPrice.usdcusdts = ticker.a  // Mejor bid (compra)
+        lastPrice.usdcusdtb = ticker.b  // Mejor ask (venta)
         checkArbitrageOpportunity()
     }
 }
@@ -30,8 +40,8 @@ const callbacksFDUSDT = {
     close: () => logger.debug('Disconnected FDUSD/USDT'),
     message: data => {
         const ticker = JSON.parse(data)
-        lastPrice.fdusdusdtb = ticker.a
-        lastPrice.fdusdusdts = ticker.b
+        lastPrice.fdusdusdtb = ticker.b
+        lastPrice.fdusdusdts = ticker.a
         checkArbitrageOpportunity()
     }
 }
@@ -42,8 +52,8 @@ const callbacksFDUSDC = {
     close: () => logger.debug('Disconnected FDUSD/USDC'),
     message: data => {
         const ticker = JSON.parse(data)
-        lastPrice.fdusdusdcs = ticker.b
-        lastPrice.fdusdusdcb = ticker.a
+        lastPrice.fdusdusdcs = ticker.a
+        lastPrice.fdusdusdcb = ticker.b
         checkArbitrageOpportunity()
     }
 }
@@ -73,28 +83,94 @@ const arePricesReady = () => {
 }
 
 // Función para validar oportunidades de arbitraje en tiempo real
+async function placeLimitOrder(symbol, side, quantity, price) {
+    try {
+        const order = await client.newOrder(symbol, side, 'LIMIT', {
+            price: price,
+            quantity: quantity,
+            timeInForce: 'GTC'
+        })
+        logger.debug(`Order placed: ${symbol} ${side} ${quantity} @ ${price}`)
+        return order
+    } catch (error) {
+        logger.error(`Order error: ${symbol} ${side} ${quantity} @ ${price}`, error)
+        return null
+    }
+}
+
+async function executeArbitrage1(arb1) {
+    
+    try {
+        // Calculate quantities
+        const usdtAmount = CONFIG.ORDER_SIZE_USDT
+        const fdusdAmount = usdtAmount / lastPrice.fdusdusdtb
+        const usdcAmount = fdusdAmount * lastPrice.fdusdusdcs
+
+        // Place orders in sequence
+        const order1 = await placeLimitOrder('FDUSDUSDT', 'BUY', fdusdAmount, lastPrice.fdusdusdtb)
+        if (!order1) return;
+        
+        const order2 = await placeLimitOrder('FDUSDUSDC', 'SELL', fdusdAmount, lastPrice.fdusdusdcs)
+        if (!order2) return;
+        
+        const order3 = await placeLimitOrder('USDCUSDT', 'SELL', usdcAmount, lastPrice.usdcusdts)
+        if (!order3) return;
+
+        logger.debug(`Arbitrage 1 executed with profit: ${(arb1 - 1) * 100}%`)
+    } catch (error) {
+        logger.error('Error executing arbitrage 1:', error)
+    }
+}
+
+async function executeArbitrage2(arb2) {
+    
+    try {
+        // Calculate quantities
+        const usdtAmount = CONFIG.ORDER_SIZE_USDT
+        const usdcAmount = usdtAmount / lastPrice.usdcusdtb
+        const fdusdAmount = usdcAmount / lastPrice.fdusdusdcb
+
+        // Place orders in sequence
+        const order1 = await placeLimitOrder('USDCUSDT', 'BUY', usdcAmount, lastPrice.usdcusdtb)
+        if (!order1) return;
+        
+        const order2 = await placeLimitOrder('FDUSDUSDC', 'BUY', fdusdAmount, lastPrice.fdusdusdcb)
+        if (!order2) return;
+        
+        const order3 = await placeLimitOrder('FDUSDUSDT', 'SELL', fdusdAmount, lastPrice.fdusdusdts)
+        if (!order3) return;
+
+        logger.debug(`Arbitrage 2 executed with profit: ${(arb2 - 1) * 100}%`)
+    } catch (error) {
+        logger.error('Error executing arbitrage 2:', error)
+    }
+}
+
+// Modify the checkArbitrageOpportunity function
 function checkArbitrageOpportunity() {
     if (!arePricesReady()) return;
 
-    const arb1 = (1/lastPrice.fdusdusdtb) * lastPrice.fdusdusdcs * lastPrice.usdcusdts;
-    const arb2 = lastPrice.fdusdusdts * (1/lastPrice.fdusdusdcb) * (1/lastPrice.usdcusdtb);
+    const arb1 = (1/lastPrice.fdusdusdts) * lastPrice.fdusdusdcb * lastPrice.usdcusdtb;
+    const arb2 = lastPrice.fdusdusdtb * (1/lastPrice.fdusdusdcs) * (1/lastPrice.usdcusdts);
 
     if (arb1 > 1.0) {
         bcount++;
         console.log(`¡Oportunidad de arbitraje 1 detectada! Valor: ${arb1}`);
+        //executeArbitrage1(arb1);
     }
     if (arb2 > 1.0) {
         scount++;
         console.log(`¡Oportunidad de arbitraje 2 detectada! Valor: ${arb2}`);
+        //executeArbitrage2(arb2);
     }
 }
 
 // Intervalo solo para mostrar estado
-setInterval(() => {
+/* setInterval(() => {
     console.clear()
     
-    const arb1 = (1/lastPrice.fdusdusdtb) * lastPrice.fdusdusdcs * lastPrice.usdcusdts;
-    const arb2 = lastPrice.fdusdusdts * (1/lastPrice.fdusdusdcb) * (1/lastPrice.usdcusdtb);
+    const arb1 = (1/lastPrice.fdusdusdts) * lastPrice.fdusdusdcb * lastPrice.usdcusdtb;
+    const arb2 = lastPrice.fdusdusdtb * (1/lastPrice.fdusdusdcs) * (1/lastPrice.usdcusdts);
     
     console.log('Últimos precios:')
     console.log('USDC/USDT Bid:', lastPrice.usdcusdtb)
@@ -109,4 +185,4 @@ setInterval(() => {
     console.log('Total oportunidades arbitraje 1:', bcount)
     console.log('Total oportunidades arbitraje 2:', scount)
     console.log('Timestamp:', new Date().toLocaleTimeString())
-}, 1000)
+}, 1000) */

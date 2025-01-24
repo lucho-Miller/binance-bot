@@ -1,16 +1,19 @@
 FROM node:18-alpine
 
-# Crear directorio de la aplicación
-WORKDIR /usr/src/app
+# Add node user for security
+USER node
 
-# Copiar archivos de dependencias
-COPY package*.json ./
+# Create app directory and set ownership
+WORKDIR /home/node/app
 
-# Instalar dependencias
+# Copy dependency files with correct ownership
+COPY --chown=node:node package*.json ./
+
+# Install dependencies
 RUN npm install
 
-# Copiar código fuente
-COPY . .
+# Copy source code with correct ownership
+COPY --chown=node:node . .
 
-# Comando para ejecutar la aplicación
+# Command to run the application
 CMD ["node", "index.js"]

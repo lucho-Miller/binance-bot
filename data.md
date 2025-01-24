@@ -1,0 +1,1 @@
+¡Oportunidad de arbitraje 1 detectada! Valor: 1.0000000199940018Total oportunidades arbitraje 1: 643
