@@ -159,7 +159,7 @@ setInterval(() => {
     
     console.log('\nMonitoring for arbitrage opportunities...')
     console.log('Timestamp:', new Date().toLocaleTimeString())
-}, 1000)
+}, 5000)
 
 // SIGINT handler for final stats
 process.on('SIGINT', () => {
