@@ -33,42 +33,114 @@ const binanceWs = new WebsocketStream({
     timeUnit: TimeUnit.MICROSECOND
 })
 
-// Bybit WebSocket setup
-const bybitWs = new WebSocket('wss://stream.bybit.com/v5/public/spot')
-
-bybitWs.on('open', () => {
-    logger.debug('Connected to Bybit')
-    const subscribeMsg = {
-        op: 'subscribe',
-        args: ['orderbook.1.TUSDUSDT']
-    }
-    bybitWs.send(JSON.stringify(subscribeMsg))
-})
-
-bybitWs.on('message', data => {
-    try {
-        const message = JSON.parse(data)
-        if (message.topic === 'orderbook.1.TUSDUSDT' && message.data) {
-            if (message.data.b && message.data.b.length > 0) {
-            const validBid = message.data.b.find(bid => parseFloat(bid[1]) > 0)
-            if (validBid) {
-                prices.bybit.tusdusdtBid = parseFloat(validBid[0])
-            }
-            }
-            if (message.data.a && message.data.a.length > 0) {
-            const validAsk = message.data.a.find(ask => parseFloat(ask[1]) > 0)
-            if (validAsk) {
-                prices.bybit.tusdusdtAsk = parseFloat(validAsk[0])
-            }
-            }
-            if ((message.data.b && message.data.b.length > 0) || (message.data.a && message.data.a.length > 0)) {
-            checkArbitrageOpportunity()
-            }
+// Add WebSocket management functions
+function setupBybitWebSocket() {
+    const ws = new WebSocket('wss://stream.bybit.com/v5/public/spot')
+    
+    ws.on('open', () => {
+        logger.debug('Connected to Bybit')
+        // Subscribe to orderbook
+        const subscribeMsg = {
+            op: 'subscribe',
+            args: ['orderbook.1.TUSDUSDT']
         }
-    } catch (error) {
-        logger.error('Error processing Bybit message:', error)
+        ws.send(JSON.stringify(subscribeMsg))
+        
+        // Start ping interval
+        ws.pingInterval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ op: 'ping' }))
+            }
+        }, 20000) // Ping every 20 seconds
+    })
+
+    ws.on('close', () => {
+        logger.debug('Disconnected from Bybit, attempting to reconnect...')
+        clearInterval(ws.pingInterval)
+        setTimeout(() => {
+            bybitWs = setupBybitWebSocket()
+        }, 5000) // Reconnect after 5 seconds
+    })
+
+    ws.on('error', (error) => {
+        logger.error('Bybit WebSocket error:', error)
+        ws.terminate()
+    })
+
+    ws.on('pong', () => {
+        logger.debug('Received pong from Bybit')
+    })
+
+    ws.on('message', data => {
+        try {
+            const message = JSON.parse(data)
+            
+            // Handle ping response
+            if (message.op === 'pong') {
+                logger.debug('Received pong from Bybit')
+                return
+            }
+
+            // Handle orderbook updates
+            if (message.topic === 'orderbook.1.TUSDUSDT' && message.data) {
+                if (message.data.b && message.data.b.length > 0) {
+                    const validBid = message.data.b.find(bid => parseFloat(bid[1]) > 0)
+                    if (validBid) {
+                        prices.bybit.tusdusdtBid = parseFloat(validBid[0])
+                    }
+                }
+                if (message.data.a && message.data.a.length > 0) {
+                    const validAsk = message.data.a.find(ask => parseFloat(ask[1]) > 0)
+                    if (validAsk) {
+                        prices.bybit.tusdusdtAsk = parseFloat(validAsk[0])
+                    }
+                }
+                if ((message.data.b && message.data.b.length > 0) || (message.data.a && message.data.a.length > 0)) {
+                    checkArbitrageOpportunity()
+                }
+            }
+        } catch (error) {
+            logger.error('Error processing Bybit message:', error)
+        }
+    })
+
+    return ws
+}
+
+// Replace the existing bybit WebSocket setup with the new one
+let bybitWs = setupBybitWebSocket()
+
+// Add connection status monitoring
+setInterval(() => {
+    if (bybitWs.readyState !== WebSocket.OPEN) {
+        logger.warn('Bybit WebSocket not connected, attempting reconnection...')
+        bybitWs.terminate()
     }
-})
+}, 30000)
+
+// Update the arePricesReady function to check timestamp
+const priceTimestamps = {
+    bybit: 0
+}
+
+function arePricesReady() {
+    const now = Date.now()
+    const maxAge = 10000 // 10 seconds max age for prices
+    
+    // Update timestamp when we get new Bybit prices
+    if (prices.bybit.tusdusdtBid !== 0 && prices.bybit.tusdusdtAsk !== 0) {
+        priceTimestamps.bybit = now
+    }
+    
+    // Check if prices are fresh enough
+    const bybitPricesFresh = (now - priceTimestamps.bybit) < maxAge
+
+    return prices.binance.tusdusdtBid !== 0 &&
+           prices.binance.tusdusdtAsk !== 0 &&
+           prices.bybit.tusdusdtBid !== 0 &&
+           prices.bybit.tusdusdtAsk !== 0 &&
+           bybitPricesFresh
+}
 
 const CONFIG = {
     MIN_PROFIT_PERCENT: 0.001, // 0.001%
@@ -84,13 +156,6 @@ const stats = {
         binanceToBybit: 0,
         bybitToBinance: 0
     }
-}
-
-function arePricesReady() {
-    return prices.binance.tusdusdtBid !== 0 &&
-           prices.binance.tusdusdtAsk !== 0 &&
-           prices.bybit.tusdusdtBid !== 0 &&
-           prices.bybit.tusdusdtAsk !== 0
 }
 
 function checkArbitrageOpportunity() {
