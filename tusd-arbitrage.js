@@ -7,11 +7,15 @@ const logger = new Console({ stdout: process.stdout, stderr: process.stderr })
 const prices = {
     binance: {
         tusdusdtBid: 0,
-        tusdusdtAsk: 0
+        tusdusdtAsk: 0,
+        tusdusdtBidSize: 0,
+        tusdusdtAskSize: 0
     },
     bybit: {
         tusdusdtBid: 0,
-        tusdusdtAsk: 0
+        tusdusdtAsk: 0,
+        tusdusdtBidSize: 0,
+        tusdusdtAskSize: 0
     }
 }
 
@@ -23,6 +27,8 @@ const binanceCallbacks = {
         const ticker = JSON.parse(data)
         prices.binance.tusdusdtBid = parseFloat(ticker.b)
         prices.binance.tusdusdtAsk = parseFloat(ticker.a)
+        prices.binance.tusdusdtBidSize = parseFloat(ticker.B)
+        prices.binance.tusdusdtAskSize = parseFloat(ticker.A)
         checkArbitrageOpportunity()
     }
 }
@@ -87,12 +93,14 @@ function setupBybitWebSocket() {
                     const validBid = message.data.b.find(bid => parseFloat(bid[1]) > 0)
                     if (validBid) {
                         prices.bybit.tusdusdtBid = parseFloat(validBid[0])
+                        prices.bybit.tusdusdtBidSize = parseFloat(validBid[1])
                     }
                 }
                 if (message.data.a && message.data.a.length > 0) {
                     const validAsk = message.data.a.find(ask => parseFloat(ask[1]) > 0)
                     if (validAsk) {
                         prices.bybit.tusdusdtAsk = parseFloat(validAsk[0])
+                        prices.bybit.tusdusdtAskSize = parseFloat(validAsk[1])
                     }
                 }
                 if ((message.data.b && message.data.b.length > 0) || (message.data.a && message.data.a.length > 0)) {
@@ -165,6 +173,17 @@ function checkArbitrageOpportunity() {
     
     const timestamp = new Date().toLocaleTimeString()
     
+    // Calculate actual tradeable amounts (minimum of both sides)
+    const binanceToBybitSize = Math.min(
+        prices.binance.tusdusdtAskSize,
+        prices.bybit.tusdusdtBidSize
+    )
+    
+    const bybitToBinanceSize = Math.min(
+        prices.bybit.tusdusdtAskSize,
+        prices.binance.tusdusdtBidSize
+    )
+
     // Binance → Bybit opportunity
     const binanceToBybit = (prices.bybit.tusdusdtBid / prices.binance.tusdusdtAsk - 1) * 100
     stats.maxProfit.binanceToBybit = Math.max(stats.maxProfit.binanceToBybit, binanceToBybit)
@@ -176,16 +195,18 @@ function checkArbitrageOpportunity() {
     if (binanceToBybit > CONFIG.MIN_PROFIT_PERCENT) {
         stats.binanceToBybit++
         console.log(`\n💰 Arbitrage Opportunity (Binance → Bybit) at ${timestamp}:`)
-        console.log(`Buy TUSD on Binance at ${prices.binance.tusdusdtAsk}`)
-        console.log(`Sell TUSD on Bybit at ${prices.bybit.tusdusdtBid}`)
+        console.log(`Buy TUSD on Binance at ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`)
+        console.log(`Sell TUSD on Bybit at ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`)
+        console.log(`Maximum tradeable amount: ${binanceToBybitSize.toFixed(2)} TUSD`)
         console.log(`Profit: ${binanceToBybit.toFixed(6)}%`)
     }
 
     if (bybitToBinance > CONFIG.MIN_PROFIT_PERCENT) {
         stats.bybitToBinance++
         console.log(`\n💰 Arbitrage Opportunity (Bybit → Binance) at ${timestamp}:`)
-        console.log(`Buy TUSD on Bybit at ${prices.bybit.tusdusdtAsk}`)
-        console.log(`Sell TUSD on Binance at ${prices.binance.tusdusdtBid}`)
+        console.log(`Buy TUSD on Bybit at ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`)
+        console.log(`Sell TUSD on Binance at ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`)
+        console.log(`Maximum tradeable amount: ${bybitToBinanceSize.toFixed(2)} TUSD`)
         console.log(`Profit: ${bybitToBinance.toFixed(6)}%`)
     }
 }
@@ -198,13 +219,13 @@ setInterval(() => {
     console.clear()
     const runningTime = Math.floor((new Date() - stats.startTime) / 1000)
     
-    console.log('Current TUSD/USDT Prices:')
+    console.log('Current TUSD/USDT Prices and Sizes:')
     console.log('Binance:')
-    console.log(`  Bid: ${prices.binance.tusdusdtBid}`)
-    console.log(`  Ask: ${prices.binance.tusdusdtAsk}`)
+    console.log(`  Bid: ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`)
+    console.log(`  Ask: ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`)
     console.log('Bybit:')
-    console.log(`  Bid: ${prices.bybit.tusdusdtBid}`)
-    console.log(`  Ask: ${prices.bybit.tusdusdtAsk}`)
+    console.log(`  Bid: ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`)
+    console.log(`  Ask: ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`)
     
     const currentSpread = {
         binanceToBybit: (prices.bybit.tusdusdtBid / prices.binance.tusdusdtAsk - 1) * 100,

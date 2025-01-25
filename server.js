@@ -3,6 +3,7 @@ const axios = require('axios')
 const app = express()
 const port = process.env.PORT || 3000
 require('./tusd-arbitrage')
+require('./wallet-monitor')
 
 
 // Basic route
