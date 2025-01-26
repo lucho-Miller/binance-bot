@@ -1,9 +1,9 @@
 require('dotenv').config()
-const chalk = require('chalk')
 const WebSocket = require('ws')
 const axios = require("axios");
 const { WebsocketClient, RestClientV5 } = require('bybit-api');
 const { Spot } = require('@binance/connector');
+const { colorize } = require('./utils/colors');
 
 // Configuración usando variables de entorno
 const config = {
@@ -81,17 +81,6 @@ const connectionState = {
     bybit: false
 }
 
-// Add colored logging helper
-const log = {
-    info: (...args) => console.log(chalk.blue(...args)),
-    success: (...args) => console.log(chalk.green(...args)),
-    warning: (...args) => console.log(chalk.yellow(...args)),
-    error: (...args) => console.log(chalk.red(...args)),
-    price: (...args) => console.log(chalk.cyan(...args)),
-    balance: (...args) => console.log(chalk.magenta(...args)),
-    time: (...args) => console.log(chalk.gray(...args))
-}
-
 // Add initial balance fetching functions
 async function fetchBinanceBalances() {
     try {
@@ -108,10 +97,10 @@ async function fetchBinanceBalances() {
         })
 
         balances.binance.lastUpdate = new Date().toISOString()
-        log.success('Initial Binance balances fetched')
+        console.log('Initial Binance balances fetched')
         return true
     } catch (error) {
-        log.error('Error fetching Binance balances:', error)
+        console.error('Error fetching Binance balances:', error)
         return false
     }
 }
@@ -165,7 +154,7 @@ async function setupBinanceWebSocket() {
         const ws = new WebSocket(`${config.binance.wsUrl}/${listenKey}`)
 
         ws.on('open', () => {
-            log.success('Connected to Binance private WebSocket')
+            console.log('Connected to Binance private WebSocket')
             connectionState.binance = true
             
             // Setup ping interval
@@ -220,7 +209,7 @@ async function setupBinanceWebSocket() {
         })
 
         ws.on('error', (error) => {
-            log.error('Binance WebSocket error:', error)
+            console.error('Binance WebSocket error:', error)
             ws.terminate()
         })
 
@@ -234,11 +223,11 @@ async function setupBinanceWebSocket() {
 
 function handleBinanceReconnect() {
     if (reconnectControl.binance.attempts >= reconnectControl.binance.maxAttempts) {
-        log.error('Max reconnection attempts reached for Binance')
+        console.error('Max reconnection attempts reached for Binance')
         return
     }
 
-    log.warning(`Attempting to reconnect to Binance (${reconnectControl.binance.attempts + 1}/${reconnectControl.binance.maxAttempts})`)
+    console.log(`Attempting to reconnect to Binance (${reconnectControl.binance.attempts + 1}/${reconnectControl.binance.maxAttempts})`)
     
     clearTimeout(reconnectControl.binance.timeout)
     reconnectControl.binance.timeout = setTimeout(async () => {
@@ -317,46 +306,40 @@ function handleBybitReconnect(wsClient) {
     }, reconnectControl.bybit.delay)
 }
 
-// Update printBalances function
 function printBalances() {
-    log.info('\n=== Current Balances ===')
+    console.log(colorize.info('\nCurrent Balances:'))
+    console.log(colorize.info('Binance:'))
+    console.log(colorize.price(`  USDT: ${balances.binance.USDT}`))
+    console.log(colorize.price(`  TUSD: ${balances.binance.TUSD}`))
+    console.log(colorize.dim(`  Last Update: ${balances.binance.lastUpdate}`))
     
-    log.info('\nBinance:')
-    log.balance(`  USDT: ${balances.binance.USDT}`)
-    log.balance(`  TUSD: ${balances.binance.TUSD}`)
-    log.time(`  Last Update: ${balances.binance.lastUpdate}`)
+    console.log(colorize.info('\nBybit:'))
+    console.log(colorize.price(`  USDT: ${balances.bybit.USDT}`))
+    console.log(colorize.price(`  TUSD: ${balances.bybit.TUSD}`))
+    console.log(colorize.dim(`  Last Update: ${balances.bybit.lastUpdate}`))
     
-    log.info('\nBybit:')
-    log.balance(`  USDT: ${balances.bybit.USDT}`)
-    log.balance(`  TUSD: ${balances.bybit.TUSD}`)
-    log.time(`  Last Update: ${balances.bybit.lastUpdate}`)
-    
-    log.info('\nTotal Combined:')
-    log.success(`  USDT: ${(parseFloat(balances.binance.USDT) + parseFloat(balances.bybit.USDT)).toFixed(8)}`)
-    log.success(`  TUSD: ${(parseFloat(balances.binance.TUSD) + parseFloat(balances.bybit.TUSD)).toFixed(8)}`)
+    console.log(colorize.info('\nTotal Combined:'))
+    console.log(colorize.success(`  USDT: ${(parseFloat(balances.binance.USDT) + parseFloat(balances.bybit.USDT)).toFixed(8)}`))
+    console.log(colorize.success(`  TUSD: ${(parseFloat(balances.binance.TUSD) + parseFloat(balances.bybit.TUSD)).toFixed(8)}`))
 }
 
-// Update connection monitor
+// Add connection monitor
 setInterval(() => {
-    log.info('\nConnection Status:')
-    console.log(
-        'Binance:',
-        connectionState.binance ? 
-            chalk.green('🟢 Connected') : 
-            chalk.red('🔴 Disconnected')
+    console.log(colorize.info('\nConnection Status:'))
+    console.log('Binance:', connectionState.binance ? 
+        colorize.success('Connected') : 
+        colorize.error('Disconnected')
     )
-    console.log(
-        'Bybit:  ',
-        connectionState.bybit ? 
-            chalk.green('🟢 Connected') : 
-            chalk.red('🔴 Disconnected')
+    console.log('Bybit:', connectionState.bybit ? 
+        colorize.success('Connected') : 
+        colorize.error('Disconnected')
     )
-}, 30000)
+}, 10000)
 
 // Modify init function to fetch balances first
 async function init() {
     try {
-        log.info('Fetching initial balances...')
+        console.log('Fetching initial balances...')
         
         // Fetch initial balances
         const [binanceSuccess, bybitSuccess] = await Promise.all([
@@ -372,7 +355,7 @@ async function init() {
         printBalances()
 
         // Then start WebSocket connections
-        log.info('Starting WebSocket connections...')
+        console.log('Starting WebSocket connections...')
         const binanceWs = await setupBinanceWebSocket()
         const bybitWs = setupBybitWebSocket()
         
@@ -380,7 +363,7 @@ async function init() {
 
         return { binanceWs, bybitWs }
     } catch (error) {
-        log.error('Error in initialization:', error)
+        console.error('Error in initialization:', error)
         process.exit(1)
     }
 }
@@ -394,9 +377,9 @@ async function init() {
     ])
 }, 5 * 60000) // Every 5 minutes */
 
-// Update shutdown handler
+// Manejo de cierre
 process.on('SIGINT', async () => {
-    log.warning('\nShutting down...')
+    console.log('\nShutting down...')
     clearTimeout(reconnectControl.binance.timeout)
     clearTimeout(reconnectControl.bybit.timeout)
     process.exit(0)

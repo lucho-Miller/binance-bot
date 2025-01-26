@@ -1,20 +1,7 @@
 const { WebsocketStream, TimeUnit } = require('@binance/connector')
 const WebSocket = require('ws')
-const chalk = require('chalk')
-const { Console } = require('console')
-
-const logger = new Console({ stdout: process.stdout, stderr: process.stderr })
-
-const log = {
-    info: (...args) => console.log(chalk.blue(...args)),
-    success: (...args) => console.log(chalk.green(...args)),
-    warning: (...args) => console.log(chalk.yellow(...args)),
-    error: (...args) => console.error(chalk.red(...args)),
-    price: (...args) => console.log(chalk.cyan(...args)),
-    profit: (...args) => console.log(chalk.magenta(...args)),
-    time: (...args) => console.log(chalk.gray(...args)),
-    debug: (...args) => logger.debug(chalk.gray(...args))
-}
+const { logger } = require('./utils/logger')
+const { colorize } = require('./utils/colors')
 
 const prices = {
     binance: {
@@ -33,8 +20,8 @@ const prices = {
 
 // Binance WebSocket setup
 const binanceCallbacks = {
-    open: () => log.success('Connected to Binance TUSD/USDT'),
-    close: () => log.warning('Disconnected from Binance TUSD/USDT'),
+    open: () => logger.success('Connected to Binance TUSD/USDT'),
+    close: () => logger.warning('Disconnected from Binance TUSD/USDT'),
     message: data => {
         const ticker = JSON.parse(data)
         prices.binance.tusdusdtBid = parseFloat(ticker.b)
@@ -46,7 +33,11 @@ const binanceCallbacks = {
 }
 
 const binanceWs = new WebsocketStream({
-    logger,
+    logger: {
+        debug: logger.debug,
+        error: logger.error,
+        info: logger.info
+    },
     callbacks: binanceCallbacks,
     timeUnit: TimeUnit.MICROSECOND
 })
@@ -56,7 +47,7 @@ function setupBybitWebSocket() {
     const ws = new WebSocket('wss://stream.bybit.com/v5/public/spot')
     
     ws.on('open', () => {
-        log.success('Connected to Bybit')
+        logger.success('Connected to Bybit')
         // Subscribe to orderbook
         const subscribeMsg = {
             op: 'subscribe',
@@ -73,7 +64,7 @@ function setupBybitWebSocket() {
     })
 
     ws.on('close', () => {
-        log.warning('Disconnected from Bybit, attempting to reconnect...')
+        logger.warning('Disconnected from Bybit, attempting to reconnect...')
         clearInterval(ws.pingInterval)
         setTimeout(() => {
             bybitWs = setupBybitWebSocket()
@@ -81,12 +72,12 @@ function setupBybitWebSocket() {
     })
 
     ws.on('error', (error) => {
-        log.error('Bybit WebSocket error:', error)
+        logger.error('Bybit WebSocket error:', error)
         ws.terminate()
     })
 
     ws.on('pong', () => {
-        log.debug('Received pong from Bybit')
+        logger.debug('Received pong from Bybit')
     })
 
     ws.on('message', data => {
@@ -95,7 +86,7 @@ function setupBybitWebSocket() {
             
             // Handle ping response
             if (message.op === 'pong') {
-                log.debug('Received pong from Bybit')
+                logger.debug('Received pong from Bybit')
                 return
             }
 
@@ -120,7 +111,7 @@ function setupBybitWebSocket() {
                 }
             }
         } catch (error) {
-            log.error('Error processing Bybit message:', error)
+            logger.error('Error processing Bybit message:', error)
         }
     })
 
@@ -133,7 +124,7 @@ let bybitWs = setupBybitWebSocket()
 // Add connection status monitoring
 setInterval(() => {
     if (bybitWs.readyState !== WebSocket.OPEN) {
-        log.warning('Bybit WebSocket not connected, attempting reconnection...')
+        logger.warning('Bybit WebSocket not connected, attempting reconnection...')
         bybitWs.terminate()
     }
 }, 30000)
@@ -206,63 +197,62 @@ function checkArbitrageOpportunity() {
 
     if (binanceToBybit > CONFIG.MIN_PROFIT_PERCENT) {
         stats.binanceToBybit++
-        log.success(`\n💰 Arbitrage Opportunity (Binance → Bybit) at ${timestamp}:`)
-        log.price(`Buy TUSD on Binance at ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`)
-        log.price(`Sell TUSD on Bybit at ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`)
-        log.info(`Maximum tradeable amount: ${binanceToBybitSize.toFixed(2)} TUSD`)
-        log.profit(`Profit: ${binanceToBybit.toFixed(6)}%`)
+        console.log(colorize.success('\nArbitrage Opportunity (Binance → Bybit)'))
+        console.log(colorize.price(`Buy TUSD on Binance at ${prices.binance.tusdusdtAsk}`))
+        console.log(colorize.price(`Sell TUSD on Bybit at ${prices.bybit.tusdusdtBid}`))
+        console.log(colorize.profit(`Profit: ${binanceToBybit.toFixed(6)}%`))
     }
 
     if (bybitToBinance > CONFIG.MIN_PROFIT_PERCENT) {
         stats.bybitToBinance++
-        log.success(`\n💰 Arbitrage Opportunity (Bybit → Binance) at ${timestamp}:`)
-        log.price(`Buy TUSD on Bybit at ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`)
-        log.price(`Sell TUSD on Binance at ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`)
-        log.info(`Maximum tradeable amount: ${bybitToBinanceSize.toFixed(2)} TUSD`)
-        log.profit(`Profit: ${bybitToBinance.toFixed(6)}%`)
+        console.log(colorize.success('\nArbitrage Opportunity (Bybit → Binance)'))
+        console.log(colorize.price(`Buy TUSD on Bybit at ${prices.bybit.tusdusdtAsk}`))
+        console.log(colorize.price(`Sell TUSD on Binance at ${prices.binance.tusdusdtBid}`))
+        console.log(colorize.profit(`Profit: ${bybitToBinance.toFixed(6)}%`))
     }
 }
 
-// Start WebSocket connection
-binanceWs.bookTicker('tusdusdt')
-
-// Status print interval
-setInterval(() => {
-    const runningTime = Math.floor((new Date() - stats.startTime) / 1000)
-    log.info('\n--------------Status:--------------')
-    log.info('Current TUSD/USDT Prices and Sizes:')
-    log.info('Binance:')
-    log.price(`  Bid: ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`)
-    log.price(`  Ask: ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`)
-    log.info('Bybit:')
-    log.price(`  Bid: ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`)
-    log.price(`  Ask: ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`)
+function printStatus() {
+    console.log(colorize.info('\n--------------Status:--------------'))
+    console.log(colorize.info('Current TUSD/USDT Prices:'))
+    console.log(colorize.info('Binance:'))
+    console.log(colorize.price(`  Bid: ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`))
+    console.log(colorize.price(`  Ask: ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`))
+    console.log(colorize.info('Bybit:'))
+    console.log(colorize.price(`  Bid: ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`))
+    console.log(colorize.price(`  Ask: ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`))
     
     const currentSpread = {
         binanceToBybit: (prices.bybit.tusdusdtBid / prices.binance.tusdusdtAsk - 1) * 100,
         bybitToBinance: (prices.binance.tusdusdtBid / prices.bybit.tusdusdtAsk - 1) * 100
     }
     
-    log.info('\nCurrent Spreads:')
-    log.profit(`Binance → Bybit: ${currentSpread.binanceToBybit.toFixed(6)}%`)
-    log.profit(`Bybit → Binance: ${currentSpread.bybitToBinance.toFixed(6)}%`)
+    console.log(colorize.info('\nCurrent Spreads:'))
+    console.log(colorize.profit(`Binance → Bybit: ${currentSpread.binanceToBybit.toFixed(6)}%`))
+    console.log(colorize.profit(`Bybit → Binance: ${currentSpread.bybitToBinance.toFixed(6)}%`))
     
-    log.info('\nStatistics:')
-    log.time(`Running time: ${Math.floor(runningTime/3600)}h ${Math.floor((runningTime%3600)/60)}m ${runningTime%60}s`)
-    log.info(`Total events processed: ${stats.totalEvents}`)
-    log.success('\nOpportunities found:')
-    log.info(`Binance → Bybit: ${stats.binanceToBybit} (Max: ${stats.maxProfit.binanceToBybit.toFixed(6)}%)`)
-    log.info(`Bybit → Binance: ${stats.bybitToBinance} (Max: ${stats.maxProfit.bybitToBinance.toFixed(6)}%)`)
+    console.log(colorize.info('\nStatistics:'))
+    const runningTime = Math.floor((new Date() - stats.startTime) / 1000)
+    console.log(colorize.info(`Running time: ${Math.floor(runningTime/3600)}h ${Math.floor((runningTime%3600)/60)}m ${runningTime%60}s`))
+    console.log(colorize.info(`Total events processed: ${stats.totalEvents}`))
+    console.log(colorize.success('\nOpportunities found:'))
+    console.log(colorize.info(`Binance → Bybit: ${stats.binanceToBybit} (Max: ${stats.maxProfit.binanceToBybit.toFixed(6)}%)`))
+    console.log(colorize.info(`Bybit → Binance: ${stats.bybitToBinance} (Max: ${stats.maxProfit.bybitToBinance.toFixed(6)}%)`))
     
-    log.time('Timestamp:', new Date().toLocaleTimeString())
-    log.info('---------------------------')
+    console.log(colorize.info('Timestamp:', new Date().toLocaleTimeString()))
+    console.log(colorize.info('---------------------------'))
+}
 
-}, 10000)
+// Start WebSocket connection
+binanceWs.bookTicker('tusdusdt')
+
+// Status print interval
+setInterval(printStatus, 10000)
 
 // SIGINT handler for final stats
 process.on('SIGINT', () => {
     console.clear()
-    log.warning('\nFinal Statistics:')
+    logger.warning('\nFinal Statistics:')
     const runningTime = Math.floor((new Date() - stats.startTime) / 1000)
     console.log(`Total running time: ${Math.floor(runningTime/3600)}h ${Math.floor((runningTime%3600)/60)}m ${runningTime%60}s`)
     console.log(`Total events processed: ${stats.totalEvents}`)
@@ -275,9 +265,9 @@ process.on('SIGINT', () => {
 
 // Error handling
 process.on('uncaughtException', err => {
-    log.error('Uncaught Exception:', err)
+    console.log(err)
 })
 
 process.on('unhandledRejection', (reason, promise) => {
-    log.error('Unhandled Rejection at:', promise, 'reason:', reason)
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
 })
