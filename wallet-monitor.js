@@ -1,7 +1,9 @@
 require('dotenv').config()
+const chalk = require('chalk')
 const WebSocket = require('ws')
 const axios = require("axios");
-const { WebsocketClient } = require('bybit-api');
+const { WebsocketClient, RestClientV5 } = require('bybit-api');
+const { Spot } = require('@binance/connector');
 
 // Configuración usando variables de entorno
 const config = {
@@ -79,6 +81,69 @@ const connectionState = {
     bybit: false
 }
 
+// Add colored logging helper
+const log = {
+    info: (...args) => console.log(chalk.blue(...args)),
+    success: (...args) => console.log(chalk.green(...args)),
+    warning: (...args) => console.log(chalk.yellow(...args)),
+    error: (...args) => console.log(chalk.red(...args)),
+    price: (...args) => console.log(chalk.cyan(...args)),
+    balance: (...args) => console.log(chalk.magenta(...args)),
+    time: (...args) => console.log(chalk.gray(...args))
+}
+
+// Add initial balance fetching functions
+async function fetchBinanceBalances() {
+    try {
+        const client = new Spot(
+            config.binance.apiKey,
+            config.binance.apiSecret,
+        )
+        
+        const { data } = await client.account()
+        const relevantBalances = data.balances.filter(b => ['USDT', 'TUSD'].includes(b.asset))
+        
+        relevantBalances.forEach(balance => {
+            balances.binance[balance.asset] = parseFloat(balance.free)
+        })
+
+        balances.binance.lastUpdate = new Date().toISOString()
+        log.success('Initial Binance balances fetched')
+        return true
+    } catch (error) {
+        log.error('Error fetching Binance balances:', error)
+        return false
+    }
+}
+
+async function fetchBybitBalances() {
+    try {
+        const client = new RestClientV5({
+            testnet: false,
+            key: config.bybit.apiKey,
+            secret: config.bybit.apiSecret,
+        });
+        const response = await client.getWalletBalance({
+            accountType: 'UNIFIED'
+        })
+        if (response.retCode === 0) {
+            const coins = response.result.list[0].coin
+            coins.forEach(coin => {
+                if (['USDT', 'TUSD'].includes(coin.coin)) {
+                    balances.bybit[coin.coin] = parseFloat(coin.walletBalance) - parseFloat(coin.locked)
+                }
+            })
+            balances.bybit.lastUpdate = new Date().toISOString()
+            console.log('Initial Bybit balances fetched')
+            return true
+        }
+        return false
+    } catch (error) {
+        console.error('Error fetching Bybit balances:', error)
+        return false
+    }
+}
+
 // Binance WebSocket setup
 async function setupBinanceWebSocket() {
     try {
@@ -100,7 +165,7 @@ async function setupBinanceWebSocket() {
         const ws = new WebSocket(`${config.binance.wsUrl}/${listenKey}`)
 
         ws.on('open', () => {
-            console.log('Connected to Binance private WebSocket')
+            log.success('Connected to Binance private WebSocket')
             connectionState.binance = true
             
             // Setup ping interval
@@ -155,7 +220,7 @@ async function setupBinanceWebSocket() {
         })
 
         ws.on('error', (error) => {
-            console.error('Binance WebSocket error:', error)
+            log.error('Binance WebSocket error:', error)
             ws.terminate()
         })
 
@@ -169,11 +234,11 @@ async function setupBinanceWebSocket() {
 
 function handleBinanceReconnect() {
     if (reconnectControl.binance.attempts >= reconnectControl.binance.maxAttempts) {
-        console.error('Max reconnection attempts reached for Binance')
+        log.error('Max reconnection attempts reached for Binance')
         return
     }
 
-    console.log(`Attempting to reconnect to Binance (${reconnectControl.binance.attempts + 1}/${reconnectControl.binance.maxAttempts})`)
+    log.warning(`Attempting to reconnect to Binance (${reconnectControl.binance.attempts + 1}/${reconnectControl.binance.maxAttempts})`)
     
     clearTimeout(reconnectControl.binance.timeout)
     reconnectControl.binance.timeout = setTimeout(async () => {
@@ -252,47 +317,86 @@ function handleBybitReconnect(wsClient) {
     }, reconnectControl.bybit.delay)
 }
 
+// Update printBalances function
 function printBalances() {
-    console.clear()
-    console.log('\nCurrent Balances:')
-    console.log('Binance:')
-    console.log(`  USDT: ${balances.binance.USDT}`)
-    console.log(`  TUSD: ${balances.binance.TUSD}`)
-    console.log(`  Last Update: ${balances.binance.lastUpdate}`)
-    console.log('\nBybit:')
-    console.log(`  USDT: ${balances.bybit.USDT}`)
-    console.log(`  TUSD: ${balances.bybit.TUSD}`)
-    console.log(`  Last Update: ${balances.bybit.lastUpdate}`)
-    console.log('\nTotal Combined:')
-    console.log(`  USDT: ${(parseFloat(balances.binance.USDT) + parseFloat(balances.bybit.USDT)).toFixed(8)}`)
-    console.log(`  TUSD: ${(parseFloat(balances.binance.TUSD) + parseFloat(balances.bybit.TUSD)).toFixed(8)}`)
+    log.info('\n=== Current Balances ===')
+    
+    log.info('\nBinance:')
+    log.balance(`  USDT: ${balances.binance.USDT}`)
+    log.balance(`  TUSD: ${balances.binance.TUSD}`)
+    log.time(`  Last Update: ${balances.binance.lastUpdate}`)
+    
+    log.info('\nBybit:')
+    log.balance(`  USDT: ${balances.bybit.USDT}`)
+    log.balance(`  TUSD: ${balances.bybit.TUSD}`)
+    log.time(`  Last Update: ${balances.bybit.lastUpdate}`)
+    
+    log.info('\nTotal Combined:')
+    log.success(`  USDT: ${(parseFloat(balances.binance.USDT) + parseFloat(balances.bybit.USDT)).toFixed(8)}`)
+    log.success(`  TUSD: ${(parseFloat(balances.binance.TUSD) + parseFloat(balances.bybit.TUSD)).toFixed(8)}`)
 }
 
-// Add connection monitor
+// Update connection monitor
 setInterval(() => {
-        console.log('\nConnection Status:')
-        console.log(`Binance: ${connectionState.binance ? '🟢 Connected' : '🔴 Disconnected'}`)
-        console.log(`Bybit: ${connectionState.bybit ? '🟢 Connected' : '🔴 Disconnected'}`)
-}, 10000)
+    log.info('\nConnection Status:')
+    console.log(
+        'Binance:',
+        connectionState.binance ? 
+            chalk.green('🟢 Connected') : 
+            chalk.red('🔴 Disconnected')
+    )
+    console.log(
+        'Bybit:  ',
+        connectionState.bybit ? 
+            chalk.green('🟢 Connected') : 
+            chalk.red('🔴 Disconnected')
+    )
+}, 30000)
 
-// Inicialización
+// Modify init function to fetch balances first
 async function init() {
     try {
+        log.info('Fetching initial balances...')
+        
+        // Fetch initial balances
+        const [binanceSuccess, bybitSuccess] = await Promise.all([
+            fetchBinanceBalances(),
+            fetchBybitBalances()
+        ])
+
+        if (!binanceSuccess || !bybitSuccess) {
+            throw new Error('Failed to fetch initial balances')
+        }
+
+        // Print initial balances
+        printBalances()
+
+        // Then start WebSocket connections
+        log.info('Starting WebSocket connections...')
         const binanceWs = await setupBinanceWebSocket()
         const bybitWs = setupBybitWebSocket()
-
-        bybitWs.subscribe(['execution']);
+        
+        bybitWs.subscribe(['wallet'])
 
         return { binanceWs, bybitWs }
     } catch (error) {
-        console.error('Error in initialization:', error)
+        log.error('Error in initialization:', error)
         process.exit(1)
     }
 }
 
-// Manejo de cierre
+// Add periodic REST API balance verification
+/* setInterval(async () => {
+    console.log('Verifying balances via REST API...')
+    await Promise.all([
+        fetchBinanceBalances(),
+        fetchBybitBalances()
+    ])
+}, 5 * 60000) // Every 5 minutes */
+
+// Update shutdown handler
 process.on('SIGINT', async () => {
-    console.log('\nShutting down...')
+    log.warning('\nShutting down...')
     clearTimeout(reconnectControl.binance.timeout)
     clearTimeout(reconnectControl.bybit.timeout)
     process.exit(0)

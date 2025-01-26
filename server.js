@@ -1,10 +1,17 @@
 const express = require('express')
 const axios = require('axios')
+const chalk = require('chalk')
 const app = express()
 const port = process.env.PORT || 3000
 require('./tusd-arbitrage')
 require('./wallet-monitor')
 
+const log = {
+    info: (...args) => console.log(chalk.blue(...args)),
+    success: (...args) => console.log(chalk.green(...args)),
+    warning: (...args) => console.log(chalk.yellow(...args)),
+    error: (...args) => console.log(chalk.red(...args))
+}
 
 // Basic route
 app.get('/', (req, res) => {
@@ -17,16 +24,16 @@ app.get('/', (req, res) => {
 
 // Start server
 const server = app.listen(port, () => {
-    console.log(`Server running on port ${port}`)
+    log.success(`Server running on port ${port}`)
 })
 
 // Auto-ping function
 const pingServer = async () => {
     try {
         const response = await axios.get(`https://binance-bot-xrwz.onrender.com`)
-        console.log('Auto-ping successful:', new Date().toLocaleTimeString(), 'Status:', response.data.status)
+        log.info('Auto-ping successful:', new Date().toLocaleTimeString(), 'Status:', response.data.status)
     } catch (error) {
-        console.error('Auto-ping failed:', error.message)
+        log.error('Auto-ping failed:', error.message)
     }
 }
 
@@ -37,7 +44,7 @@ const pingInterval = setInterval(pingServer, 60000)
 process.on('SIGINT', () => {
     clearInterval(pingInterval)
     server.close(() => {
-        console.log('Server shutdown complete')
+        log.warning('Server shutdown complete')
         process.exit(0)
     })
 })
