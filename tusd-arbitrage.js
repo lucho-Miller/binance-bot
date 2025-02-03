@@ -157,7 +157,7 @@ function arePricesReady() {
 }
 
 const CONFIG = {
-    MIN_PROFIT_PERCENT: 0.03, // 0.001%
+    MIN_PROFIT_PERCENT: 0.02, // 0.001%
 }
 
 const stats = {
@@ -210,11 +210,11 @@ function checkArbitrageOpportunity() {
     stats.maxProfit.bybitToBinance = Math.max(stats.maxProfit.bybitToBinance, bybitToBinance)
 
     // Caso 1: Oportunidad de arbitraje normal Binance → Bybit
-    if (binanceToBybit >= CONFIG.MIN_PROFIT_PERCENT && binanceToBybitSize >= 7) {
+    if (binanceToBybit >= CONFIG.MIN_PROFIT_PERCENT && binanceToBybitSize >= 35) {
         executeArbitrageOpportunity('binance', 'bybit', prices.binance.tusdusdtAsk, prices.bybit.tusdusdtBid, binanceToBybitSize, binanceToBybit);
     }
     // Caso 2: Oportunidad de arbitraje normal Bybit → Binance
-    else if (bybitToBinance >= CONFIG.MIN_PROFIT_PERCENT && bybitToBinanceSize >= 7) {
+    else if (bybitToBinance >= CONFIG.MIN_PROFIT_PERCENT && bybitToBinanceSize >= 35) {
         executeArbitrageOpportunity('bybit', 'binance', prices.bybit.tusdusdtAsk, prices.binance.tusdusdtBid, bybitToBinanceSize, bybitToBinance);
     }
     /* // Caso 3: Oportunidad de ajuste
