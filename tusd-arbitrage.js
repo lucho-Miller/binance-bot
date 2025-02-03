@@ -210,11 +210,11 @@ function checkArbitrageOpportunity() {
     stats.maxProfit.bybitToBinance = Math.max(stats.maxProfit.bybitToBinance, bybitToBinance)
 
     // Caso 1: Oportunidad de arbitraje normal Binance → Bybit
-    if (binanceToBybit >= CONFIG.MIN_PROFIT_PERCENT && binanceToBybitSize >= 7) {
+    if (binanceToBybit >= CONFIG.MIN_PROFIT_PERCENT && binanceToBybitSize >= 25) {
         executeArbitrageOpportunity('binance', 'bybit', prices.binance.tusdusdtAsk, prices.bybit.tusdusdtBid, binanceToBybitSize, binanceToBybit);
     }
     // Caso 2: Oportunidad de arbitraje normal Bybit → Binance
-    else if (bybitToBinance >= CONFIG.MIN_PROFIT_PERCENT && bybitToBinanceSize >= 7) {
+    else if (bybitToBinance >= CONFIG.MIN_PROFIT_PERCENT && bybitToBinanceSize >= 25) {
         executeArbitrageOpportunity('bybit', 'binance', prices.bybit.tusdusdtAsk, prices.binance.tusdusdtBid, bybitToBinanceSize, bybitToBinance);
     }
     /* // Caso 3: Oportunidad de ajuste
