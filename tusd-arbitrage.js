@@ -2,6 +2,9 @@ const { WebsocketStream, TimeUnit } = require('@binance/connector')
 const WebSocket = require('ws')
 const { logger } = require('./utils/logger')
 const { colorize } = require('./utils/colors')
+const ArbitrageExecutor = require('./arbitrage-executor')
+const balanceManager = require('./balance-manager');
+
 
 const prices = {
     binance: {
@@ -154,8 +157,7 @@ function arePricesReady() {
 }
 
 const CONFIG = {
-    MIN_PROFIT_PERCENT: 0.001, // 0.001%
-    ORDER_SIZE_USDT: 1000
+    MIN_PROFIT_PERCENT: 0.03, // 0.001%
 }
 
 const stats = {
@@ -169,58 +171,107 @@ const stats = {
     }
 }
 
+const executor = new ArbitrageExecutor()
+
 function checkArbitrageOpportunity() {
     if (!arePricesReady()) return
 
     stats.totalEvents++
     
-    const timestamp = new Date().toLocaleTimeString()
-    
-    // Calculate actual tradeable amounts (minimum of both sides)
-    const binanceToBybitSize = Math.min(
+    const allBalances = balanceManager.getBalances();
+    const allConnections = balanceManager.getConnectionState();
+
+    if (!allConnections.binance || !allConnections.bybit) {
+        console.log(colorize.warning('One or more exchanges are not connected'))
+        return
+    }
+
+    // Calcula los tamaños máximos disponibles
+    const binanceToBybitSize = Math.floor(Math.min(
         prices.binance.tusdusdtAskSize,
-        prices.bybit.tusdusdtBidSize
-    )
+        prices.bybit.tusdusdtBidSize,
+        allBalances.binance.USDT * 0.98,
+        allBalances.bybit.TUSD * 0.98
+    ))
     
-    const bybitToBinanceSize = Math.min(
+    const bybitToBinanceSize = Math.floor(Math.min(
         prices.bybit.tusdusdtAskSize,
-        prices.binance.tusdusdtBidSize
-    )
+        prices.binance.tusdusdtBidSize,
+        allBalances.bybit.USDT * 0.98,
+        allBalances.binance.TUSD * 0.98
+    ))
 
-    // Binance → Bybit opportunity
+    // Calcula las diferencias de precio
     const binanceToBybit = (prices.bybit.tusdusdtBid / prices.binance.tusdusdtAsk - 1) * 100
-    stats.maxProfit.binanceToBybit = Math.max(stats.maxProfit.binanceToBybit, binanceToBybit)
-
-    // Bybit → Binance opportunity
     const bybitToBinance = (prices.binance.tusdusdtBid / prices.bybit.tusdusdtAsk - 1) * 100
+
+    // Actualiza estadísticas
+    stats.maxProfit.binanceToBybit = Math.max(stats.maxProfit.binanceToBybit, binanceToBybit)
     stats.maxProfit.bybitToBinance = Math.max(stats.maxProfit.bybitToBinance, bybitToBinance)
 
-    if (binanceToBybit > CONFIG.MIN_PROFIT_PERCENT) {
-        stats.binanceToBybit++
-        console.log(colorize.success('\nArbitrage Opportunity (Binance → Bybit)'))
-        console.log(colorize.price(`Buy TUSD on Binance at ${prices.binance.tusdusdtAsk}`))
-        console.log(colorize.price(`Sell TUSD on Bybit at ${prices.bybit.tusdusdtBid}`))
-        console.log(colorize.profit(`Profit: ${binanceToBybit.toFixed(6)}%`))
+    // Caso 1: Oportunidad de arbitraje normal Binance → Bybit
+    if (binanceToBybit >= CONFIG.MIN_PROFIT_PERCENT && binanceToBybitSize >= 7) {
+        executeArbitrageOpportunity('binance', 'bybit', prices.binance.tusdusdtAsk, prices.bybit.tusdusdtBid, binanceToBybitSize, binanceToBybit);
     }
+    // Caso 2: Oportunidad de arbitraje normal Bybit → Binance
+    else if (bybitToBinance >= CONFIG.MIN_PROFIT_PERCENT && bybitToBinanceSize >= 7) {
+        executeArbitrageOpportunity('bybit', 'binance', prices.bybit.tusdusdtAsk, prices.binance.tusdusdtBid, bybitToBinanceSize, bybitToBinance);
+    }
+    /* // Caso 3: Oportunidad de ajuste
+    else if ( binanceToBybit == 0 && allBalances.binance.TUSD < 7) {
+        console.log(colorize.warning('Ajuste de saldo: TUSD' ))
+        let amount = Math.floor(Math.min(allBalances.binance.USDT * 0.4,
+            prices.bybit.tusdusdtBidSize,
+            prices.binance.tusdusdtAskSize))
+        if (amount >= 7) {
+            executeArbitrageOpportunity('binance', 'bybit', prices.binance.tusdusdtAsk, prices.bybit.tusdusdtBid, amount, 0);
+        }
+    }
+    // Caso 4: Oportunidad de ajuste
+    else if ( bybitToBinance == 0 && allBalances.binance.USDT < 7) {
+        console.log(colorize.warning('Ajuste de saldo: USDT' ))
+        let amount = Math.floor(Math.min(allBalances.binance.TUSD * 0.4,
+            prices.binance.tusdusdtBidSize,
+            prices.bybit.tusdusdtAskSize))
+        if (amount >= 7) {
+            executeArbitrageOpportunity('bybit', 'binance', prices.bybit.tusdusdtAsk, prices.binance.tusdusdtBid, amount, 0);
+        }
+    } */
+    
+}
 
-    if (bybitToBinance > CONFIG.MIN_PROFIT_PERCENT) {
-        stats.bybitToBinance++
-        console.log(colorize.success('\nArbitrage Opportunity (Bybit → Binance)'))
-        console.log(colorize.price(`Buy TUSD on Bybit at ${prices.bybit.tusdusdtAsk}`))
-        console.log(colorize.price(`Sell TUSD on Binance at ${prices.binance.tusdusdtBid}`))
-        console.log(colorize.profit(`Profit: ${bybitToBinance.toFixed(6)}%`))
+function executeArbitrageOpportunity(buyExchange, sellExchange, buyPrice, sellPrice, amount, profit) {
+    stats[`${buyExchange}To${sellExchange.charAt(0).toUpperCase() + sellExchange.slice(1)}`]++;
+    
+    const opportunity = {
+        buyExchange,
+        sellExchange,
+        buyPrice,
+        sellPrice,
+        amount,
+        profit
     }
+    
+    executor.executeArbitrage(opportunity)
+        .then(success => {
+            if (success) {
+                console.log(colorize.success('Arbitrage executed successfully!'))
+            }
+        })
+        .catch(error => {
+            console.error(colorize.error('Arbitrage execution failed:'), error)
+        })
 }
 
 function printStatus() {
     console.log(colorize.info('\n--------------Status:--------------'))
     console.log(colorize.info('Current TUSD/USDT Prices:'))
     console.log(colorize.info('Binance:'))
-    console.log(colorize.price(`  Bid: ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`))
     console.log(colorize.price(`  Ask: ${prices.binance.tusdusdtAsk} (Size: ${prices.binance.tusdusdtAskSize})`))
+    console.log(colorize.price(`  Bid: ${prices.binance.tusdusdtBid} (Size: ${prices.binance.tusdusdtBidSize})`))
     console.log(colorize.info('Bybit:'))
-    console.log(colorize.price(`  Bid: ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`))
     console.log(colorize.price(`  Ask: ${prices.bybit.tusdusdtAsk} (Size: ${prices.bybit.tusdusdtAskSize})`))
+    console.log(colorize.price(`  Bid: ${prices.bybit.tusdusdtBid} (Size: ${prices.bybit.tusdusdtBidSize})`))
     
     const currentSpread = {
         binanceToBybit: (prices.bybit.tusdusdtBid / prices.binance.tusdusdtAsk - 1) * 100,

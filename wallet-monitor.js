@@ -4,6 +4,9 @@ const axios = require("axios");
 const { WebsocketClient, RestClientV5 } = require('bybit-api');
 const { Spot } = require('@binance/connector');
 const { colorize } = require('./utils/colors');
+const balanceManager = require('./balance-manager');
+const connectDB = require('./db/connect');
+
 
 // Configuración usando variables de entorno
 const config = {
@@ -45,20 +48,6 @@ function validateConfig() {
 // Llamar a la validación antes de iniciar
 validateConfig()
 
-// Estado de los balances
-let balances = {
-    binance: {
-        USDT: '0',
-        TUSD: '0',
-        lastUpdate: null
-    },
-    bybit: {
-        USDT: '0',
-        TUSD: '0',
-        lastUpdate: null
-    }
-}
-
 // Add reconnection control
 const reconnectControl = {
     binance: {
@@ -75,12 +64,6 @@ const reconnectControl = {
     }
 }
 
-// Add connection state tracking
-const connectionState = {
-    binance: false,
-    bybit: false
-}
-
 // Add initial balance fetching functions
 async function fetchBinanceBalances() {
     try {
@@ -93,10 +76,8 @@ async function fetchBinanceBalances() {
         const relevantBalances = data.balances.filter(b => ['USDT', 'TUSD'].includes(b.asset))
         
         relevantBalances.forEach(balance => {
-            balances.binance[balance.asset] = parseFloat(balance.free)
+            balanceManager.updateBalance('binance', balance.asset, parseFloat(balance.free))
         })
-
-        balances.binance.lastUpdate = new Date().toISOString()
         console.log('Initial Binance balances fetched')
         return true
     } catch (error) {
@@ -119,10 +100,9 @@ async function fetchBybitBalances() {
             const coins = response.result.list[0].coin
             coins.forEach(coin => {
                 if (['USDT', 'TUSD'].includes(coin.coin)) {
-                    balances.bybit[coin.coin] = parseFloat(coin.walletBalance) - parseFloat(coin.locked)
+                    balanceManager.updateBalance('bybit', coin.coin, parseFloat(coin.walletBalance) - parseFloat(coin.locked));
                 }
             })
-            balances.bybit.lastUpdate = new Date().toISOString()
             console.log('Initial Bybit balances fetched')
             return true
         }
@@ -155,7 +135,7 @@ async function setupBinanceWebSocket() {
 
         ws.on('open', () => {
             console.log('Connected to Binance private WebSocket')
-            connectionState.binance = true
+            balanceManager.updateConnectionState('binance', true);
             
             // Setup ping interval
             ws.pingInterval = setInterval(() => {
@@ -190,11 +170,10 @@ async function setupBinanceWebSocket() {
                 if (message.e === 'outboundAccountPosition') {
                     message.B.forEach(balance => {
                         if (balance.a === 'USDT' || balance.a === 'TUSD') {
-                            balances.binance[balance.a] = balance.f
-                            balances.binance.lastUpdate = new Date().toISOString()
+                            balanceManager.updateBalance('binance', balance.a, balance.f);
                         }
                     })
-                    printBalances()
+                    console.log('Binance account update received')
                 }
             } catch (error) {
                 console.error('Error processing Binance message:', error)
@@ -202,7 +181,7 @@ async function setupBinanceWebSocket() {
         })
 
         ws.on('close', () => {
-            connectionState.binance = false
+            balanceManager.updateConnectionState('binance', false);
             clearInterval(ws.pingInterval)
             clearInterval(ws.renewalInterval)
             handleBinanceReconnect()
@@ -256,12 +235,11 @@ function setupBybitWebSocket() {
                 data.data.forEach(wallet => {
                     wallet.coin.forEach(coin => {
                         if (coin.coin === 'USDT' || coin.coin === 'TUSD') {
-                            balances.bybit[coin.coin] = parseFloat(coin.walletBalance) - parseFloat(coin.locked)
-                            balances.bybit.lastUpdate = new Date().toISOString()
+                            balanceManager.updateBalance('bybit', coin.coin, parseFloat(coin.walletBalance) - parseFloat(coin.locked));
                         }
                     })
                 })
-                printBalances()
+                console.log('Bybit wallet update received')
             }
         } catch (error) {
             console.error('Error processing Bybit message:', error)
@@ -270,13 +248,13 @@ function setupBybitWebSocket() {
 
     wsClient.on('open', () => {
         console.log('Connected to Bybit private WebSocket')
-        connectionState.bybit = true
+        balanceManager.updateConnectionState('bybit', true);
         wsClient.subscribe(['wallet'])
     })
 
     wsClient.on('close', () => {
         console.log('Bybit WebSocket connection closed')
-        connectionState.bybit = false
+        balanceManager.updateConnectionState('bybit', false);
         handleBybitReconnect(wsClient)
     })
 
@@ -306,7 +284,9 @@ function handleBybitReconnect(wsClient) {
     }, reconnectControl.bybit.delay)
 }
 
+// Reemplazar la función printBalances
 function printBalances() {
+    const balances = balanceManager.getBalances();
     console.log(colorize.info('\nCurrent Balances:'))
     console.log(colorize.info('Binance:'))
     console.log(colorize.price(`  USDT: ${balances.binance.USDT}`))
@@ -319,18 +299,19 @@ function printBalances() {
     console.log(colorize.dim(`  Last Update: ${balances.bybit.lastUpdate}`))
     
     console.log(colorize.info('\nTotal Combined:'))
-    console.log(colorize.success(`  USDT: ${(parseFloat(balances.binance.USDT) + parseFloat(balances.bybit.USDT)).toFixed(8)}`))
-    console.log(colorize.success(`  TUSD: ${(parseFloat(balances.binance.TUSD) + parseFloat(balances.bybit.TUSD)).toFixed(8)}`))
+    console.log(colorize.success(`  USDT: ${balances.totals.USDT}`))
+    console.log(colorize.success(`  TUSD: ${balances.totals.TUSD}`))
 }
 
 // Add connection monitor
 setInterval(() => {
+    const connections = balanceManager.getConnectionState();
     console.log(colorize.info('\nConnection Status:'))
-    console.log('Binance:', connectionState.binance ? 
+    console.log('Binance:', connections.binance ? 
         colorize.success('Connected') : 
         colorize.error('Disconnected')
     )
-    console.log('Bybit:', connectionState.bybit ? 
+    console.log('Bybit:', connections.bybit ? 
         colorize.success('Connected') : 
         colorize.error('Disconnected')
     )
@@ -340,6 +321,8 @@ setInterval(() => {
 async function init() {
     try {
         console.log('Fetching initial balances...')
+        await connectDB();
+
         
         // Fetch initial balances
         const [binanceSuccess, bybitSuccess] = await Promise.all([
