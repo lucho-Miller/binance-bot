@@ -24,7 +24,7 @@ const server = app.listen(port, () => {
 // Auto-ping function
 const pingServer = async () => {
     try {
-        const response = await axios.get(`https://binance-bot-xrwz.onrender.com`)
+        const response = await axios.get(`https://binance-bot-b2h3.onrender.com`)
         console.log(colorize.info('Auto-ping successful:'), response.data.status)
     } catch (error) {
         console.error(colorize.error('Auto-ping failed:'), error.message)
